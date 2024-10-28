@@ -1,0 +1,30 @@
+version: '3.7'
+networks:
+  mojaloop-itk-minimal-test-net:
+    driver: bridge
+
+services:
+
+  # mockserver acts as a simple test mechanism, simulating the core-connector host DFSP backend.
+  # this allows testing of the core connector without needing to have a real DFSP backend.
+  mockserver:
+    networks:
+      - mojaloop-itk-minimal-test-net
+    image: jamesdbloom/mockserver:mockserver-5.7.2
+    # uncomment next line to run the mock server in TRACE debug level - useful for debugging expectations
+    #command: -logLevel TRACE -serverPort 1080
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "1080:1080"
+    volumes:
+      - "./configs/mockserver/mockserver.properties:/opt/mockserver/mockserver.properties"
+      - "./configs/mockserver/mockServerExpectations.json:/mockServerExpectations.json"
+    environment:
+      # note that these dont seem to work. the properties file seems to be the only way of setting options.
+      # the mockserver docs are possibly out of date.
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/mockServerExpectations.json
+      - MOCKSERVER_LOG_LEVEL=INFO
+      - MOCKSERVER_PROPERTY_FILE=/opt/mockserver/mockserver.properties

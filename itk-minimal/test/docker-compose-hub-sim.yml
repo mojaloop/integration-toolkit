@@ -1,0 +1,34 @@
+version: '3.7'
+networks:
+  mojaloop-itk-minimal-test-net:
+    driver: bridge
+
+services:
+
+  ml-testing-toolkit:
+    networks:
+      mojaloop-itk-minimal-test-net:
+        aliases:
+          - ttkhubsim
+    image: mojaloop/ml-testing-toolkit:v15.0.0
+    command: npm start
+    volumes:
+      - "./configs/ttk/spec_files:/opt/app/spec_files"
+    ports:
+      - "4040:4040"
+      - "5050:5050"
+    environment:
+      - AUTH_ENABLED=FALSE
+
+  ml-testing-toolkit-ui:
+    image: mojaloop/ml-testing-toolkit-ui:v15.1.3
+    networks:
+      - mojaloop-itk-minimal-test-net
+    ports:
+      - "6060:6060"
+    environment:
+      - API_BASE_URL=http://localhost:5050
+      - AUTH_ENABLED=FALSE
+    command:
+      - sh
+      - /usr/share/nginx/start.sh
