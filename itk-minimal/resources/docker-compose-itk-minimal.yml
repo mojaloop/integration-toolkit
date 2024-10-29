@@ -1,0 +1,55 @@
+version: '3.7'
+networks:
+  mojaloop-itk-net:
+    name: mojaloop-itk-net
+
+services:
+
+  mojaloop-connector:
+    networks:
+      - mojaloop-itk-net
+    image: mojaloop/sdk-scheme-adapter:latest
+    container_name: itk-mojaloop-connector
+    env_file: ./mojaloop-connector.env
+    ports:
+      - "4000:4000"
+      - "4001:4001"
+      - "4002:4002"
+      - "9229:9229"
+    depends_on:
+      - redis
+      - core-connector
+    command: yarn nx run modules-api-svc:start
+    volumes:
+      - ./secrets:/opt/app/secrets
+    healthcheck:
+      test: [
+        "CMD" , "curl", "-f", "http://localhost:4001"
+      ]
+      timeout: 20s
+      retries: 10
+      start_period: 40s
+      interval: 30s
+
+  core-connector:
+    networks:
+      - mojaloop-itk-net
+    image: fineract-core-connector
+    container_name: itk-core-connector
+    env_file: ./core-connector.env
+    ports:
+      - "3003:3003"
+
+  redis:
+    networks:
+      - mojaloop-itk-net
+    image: "redis:6.2.4-alpine"
+    container_name: itk-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD" ,"sh", "-c", "redis-cli","ping"]
+      timeout: 20s
+      retries: 10
+      start_period: 40s
+      interval: 30s

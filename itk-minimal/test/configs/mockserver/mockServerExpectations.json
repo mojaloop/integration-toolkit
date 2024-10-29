@@ -1,0 +1,32 @@
+[
+    {
+        "httpRequest": {
+            "method": "GET",
+            "path": "/parties/.*"
+        },
+        "httpResponseTemplate": {
+            "templateType": "JAVASCRIPT",
+            "template": "var re = RegExp(\"(\\/parties\\/)(.*)\\/(.*)\");var m = request.path.match(re);var idType = m[2];var idValue = m[3];return {statusCode: 200,headers: {'Content-Type': ['application/json']},body: {idType: idType,idValue: idValue,displayName: 'test user',firstName: 'test',lastName: 'user',fspId: 'mojapi1'}};"
+        }
+    },
+    {
+        "httpRequest": {
+            "method": "POST",
+            "path": "/quoterequests"
+        },
+        "httpResponseTemplate": {
+            "templateType": "JAVASCRIPT",
+            "template": "var body = JSON.parse(request.body.string);return {statusCode: 200,headers: {'Content-Type': ['application/json']},body: {quoteId: body.quoteId,transactionId: body.transactionId,transferAmount: body.amount,transferAmountCurrency: body.currency}};"
+        }
+    },
+    {
+        "httpRequest": {
+            "method": "POST",
+            "path": "/transfers"
+        },
+        "httpResponseTemplate": {
+            "templateType": "JAVASCRIPT",
+            "template": "var min = 1000000;var max = 9999999;var randint = Math.floor(Math.random() * (max - min + 1)) + min;return {statusCode: 200,headers: {'Content-Type': ['application/json']},body: {homeTransactionId: \"\" + randint}};"
+        }
+    }
+]
