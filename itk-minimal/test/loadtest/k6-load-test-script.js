@@ -26,21 +26,13 @@ export const options = {
     }
 };
 
-const TestUsers = [
-    { msisdn: '1234555555' },
-    { msisdn: '1234555556' },
-    { msisdn: '1234555557' },
-    { msisdn: '1234555558' },
-    { msisdn: '1234555559' },
-    { msisdn: '1234555560' },
-    { msisdn: '1234555561' },
-    { msisdn: '1234555562' },
-    { msisdn: '1234555563' },
-    { msisdn: '1234555564' },
-    { msisdn: '1234555565' },
-    { msisdn: '1234555566' },
-    { msisdn: '1234555567' },
-];
+const TestUsers = [];
+
+for(let n = 1234000001; n < 1234000128; n++) {
+    TestUsers.push({
+        msisdn: `0${n}`
+    });
+}
 
 // hack to generate a UUID. necessary as k6 doesnt expose a nicer UUID generation option
 function generateUUID() {

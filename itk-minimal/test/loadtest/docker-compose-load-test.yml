@@ -29,6 +29,8 @@ services:
       retries: 10
       start_period: 40s
       interval: 30s
+    extra_hosts:
+      - mojapi1:192.168.2.10
 
   redis:
     networks:
