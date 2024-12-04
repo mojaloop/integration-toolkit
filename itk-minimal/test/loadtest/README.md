@@ -57,7 +57,7 @@ via the Mifos provided docker compose scripts. These can be found in the Mifos G
 _Note that this load test has only been performed against the postgres backed version, this is therefore the recommended
 option._
 
-1. Open a terminal session on host 1.
+1. Open a terminal session to host 1.
 2. Clone the MifosX docker compose scripts:
 
 ```bash
@@ -93,25 +93,16 @@ $ docker compose up
 It is recommended NOT to change default settings except if you wish to access the Mifos portal from other hosts. See
 Mifos documentation if you wish to do this.
 
-## 2. Creating Test Accounts
+### Creating Test End-User Accounts
 
 In order to send funds to some test MFI customer accounts, we must create them.
 
-Two mechanisms exist for creating Mifos clients and savings accounts. It is recommended to use the backend API mechanism
-due to the complexities of preparing bulk import spreadsheets and manual configuration required.
-
-#### Mifos Bulk Imoprt from MS Excel
-
-You will need to manually create a savings account product, download some excel templates for clients and savings
-accounts, complete them and upload them via the Mifos portal.
-
-Please see bulk import documentation on Mifos
-website [here](https://docs.mifos.org/mifosx/user-manual/data-import-tool).
-
-#### Via Mifos Backend API
-
 A node.js script `setupFineract.js` is provided to configure a vanilla installation of MifosX for receiving test savings
-deposit transactions.
+deposit transactions. Note that this script expects to be able to reach the fineract API container at localhost on
+port 8080. This means you should run this script from host 1 itself. Alternatively you can edit the script to change
+this line to point to a different hostname:
+
+`const FINERACT_API_BASE_URL = 'http://localhost:8080/fineract-provider/api/v1';`
 
 With node.js installed on your local machine, run the script:
 
@@ -126,6 +117,8 @@ You can also verify the client and savings accounts were created successfully vi
 Note that the default username for logging on to the MifosX portal is "mifos" and the default password is "password".
 
 ## 3. Installing ITK Components on Host 2
+
+1. Open a terminal session to Host 2.
 
 ### Install ITK Configurator Utility
 
@@ -143,10 +136,12 @@ You should see the utility run in the terminal thus:
 
 ![](docs/assets/itk-configurator-main-screen.png)
 
-### Clone the ITK Repository to Host 2
+3. Close the utility by selecting 'exit' and pressing 'enter'.
 
-1. Choose a location to install the ITK code, on a linux or mac machine, for testing purposes, it is sensible to put
-   this in your users home directory to eliminate file permission issues; e.g. `~/mojaloopitk/`
+### Clone the ITK Repository
+
+1. Choose a location to install the ITK code on host 2, on a linux or mac machine, for testing purposes, it is sensible
+   to put this in your users home directory to eliminate file permission issues; e.g. `~/mojaloopitk/`
 2. `cd` into your new directory and clone the ITK repository thus:
 
 ```bash
@@ -157,24 +152,40 @@ $ git clone git@github.com:mojaloop/integration-toolkit.git
 
 ### Creating Cryptographic Keys and Certificates
 
-> Note: For the purposes of this test, the certificate authority, client and server certificates, and JWS keys on both sides of
-the Mojaloop connection will be identical. This would never be recommended in a production scenario but it means we only
-need to generate a single set of keys. Both sides of the connection will still have to perform the same cryptographic
-operations as if the keys and certificates were different. This has no effect on test results but allows us to
-include the overhead of the cryptographic operations in our performance data.
+> Note: For the purposes of this test, the certificate authority, client and server certificates, and JWS keys on both
+> sides of
+> the Mojaloop connection will be identical. This would never be recommended in a production scenario but it means we only
+> need to generate a single set of keys. Both sides of the connection will still have to perform the same cryptographic
+> operations as if the keys and certificates were different. This has no effect on test results but allows us to
+> include the overhead of the cryptographic operations in our performance data.
 
 #### Creating mTLS Certificates
 
 1. Create a new sub-directory called "secrets" in the ITK directory
    e.g. `~/mojaloopitk/integration-toolkit/itk-minimal/resources/secrets`
 
+```bash
+$ mkdir secrets
+```
+
 2. Run the itkconfigurator utility:
 
 ```bash
-$ itkconfigurator
+$ itkconfigurator mc=./mojaloop-connector.env
 ```
 
-3. Navigate (using <tab> or arrow keys) to the "Security Tools" button and press 'enter' to open the security tools
+3. Navigate to the 'Edit Connection Settings' button and press 'enter'.
+
+![](docs/assets/itk-configurator-conn-settings.png)
+
+4. Change the value of 'DFSP DNS Host Names' to `host2,host3`, select 'done' and press 'enter'.
+
+_Note: If the hostnames your machines will use to communicate over the network are not "host2" and "host3" you will
+need to change the names above from "host2" and "host3." appropriately. The values should match the hostnames exactly.
+This list should be comma separated with no whitespace. Note that the items in this list are added to the created X.509
+certificates as subject alternative names for which the certificates can be used for identification._
+
+5. Navigate (using <tab> or arrow keys) to the "Security Tools" button and press 'enter' to open the security tools
    page.
 
 ![](docs/assets/itk-configurator-sec-tools.png)
@@ -186,6 +197,18 @@ $ itkconfigurator
 
 ![](docs/assets/itk-configurator-gen-pki.png)
 
+5. Check that certificate files have been created in the `./secrets` sub-directory. These should be:
+    - cacert.pem
+    - servercert.pem
+    - serverkey.pem
+6. Because we will use the same X.509 certificates and keys for both sides of the connection, copy the server
+   certificate and key thus:
+
+```bash
+$ cp servercert.pem clientcert.pem
+$ cp serverkey.pem clientkey.pem
+```
+
 #### Creating Message Signing (JWS) Key-Pair
 
 1. Navigate to the "Generate New Message Signing Key-Pair" button and press 'enter'. You should see a sequence of
@@ -195,16 +218,174 @@ $ itkconfigurator
 
 ![](docs/assets/itk-configurator-gen-jws.png)
 
+2. Close the itkconfigurator utility if it is still open by returning to the main screen and selecting the 'Exit'
+   button.
+
+3. Check that JWS key files have been created in the `./secrets` sub-directory. These should be:
+    - jwsSigningKey.pem
+    - jwsPublicKey.pem
+
+4. Because we will use the same JWS keys for both sides of the connection, make a verification keys sub-directory and 
+   copy the keys thus:
+
+```bash
+$ mkdir ./secrets/iwsValidationKeys
+$ cp jwsPublicKey.pem ./jwsValidationKeys/host2.pem
+$ cp jwsPublicKey.pem ./jwsValidationKeys/host3.pem
+```
+
+ _Note: If the hostnames your machines will use to communicate over the network are not "host2" and "host3" you will
+ need to change the names of the validation key files above from "host2.pem" and "host3.pem" appropriately. The
+ validation key filenames should match the hostnames exactly._
+
+5. Keep a note of the location of your secrets directory. We will copy this entire directory to host3 in a following
+   step.
+
 ### Configuring Mojaloop Connectors
 
-1. Close the itkconfigurator utility if it is still open by returning to the main screen and selecting the 'Exit'
-   button.
-2.  
+1. Start the itkconfigurator utility again.
+
+```bash
+$ itkconfigurator mc=./mojaloop-connector.env
+```
+
+2. Navigate to the 'Edit Organisation Settings' (selected by default) button and press 'enter'.
+
+![](docs/assets/itk-configurator-org-settings.png)
+
+3. Change the 'DFSP ID' value from `mojaloop-sdk` to `host2`, select 'done' and press 'enter'.
+4. Navigate to the 'Edit Scheme Settings' button and press 'enter'.
+
+![](docs/assets/itk-configurator-scheme-settings.png)
+
+5. Change the 'Hub Endpoint' value to 'host3:4040', select 'done' and press 'enter'.
+6. Navigate to the 'Connection Security Settings' button and press 'enter'.
+
+![](docs/assets/itk-configurator-conn-sec-settings.png)
+
+7. Change the values to match those show in the screenshot above.
+8. Select 'done' and press 'enter.'
+9. Navigate to the 'Non-repudiation Settings' button and press 'enter'.
+
+![](docs/assets/itk-configurator-jws-settings.png)
+
+10. Check the 'Validate inbound JWS' and 'Enable JWS Signing' checkboxes as per the screenshot above, select 'done' and
+    press 'enter'.
+11. Return to the main screen, navigate the 'Exit' button and press 'enter'. When prompted to save changes, ensure 'Yes'
+    is highlighted and press 'enter'.
+
+### Starting ITK Services
+
+1. Start the ITK services via docker compose thus:
+
+```bash
+$ docker compose -f ./docker-compose-itk-minimal.yml up
+```
+
+You should see the docker containers start and begin logging output to the terminal.
 
 ## 3. Setup Load Generation on Host 3
 
+1. Open a terminal session to Host 3.
+
+### Install ITK Configurator Utility
+
+1. Follow the installation instructions on the README here:
+
+[https://github.com/mojaloop/itk-configuration-utility/tree/main](https://github.com/mojaloop/itk-configuration-utility/tree/main)
+
+2. Test the utility has been installed correctly by running this command:
+
+```bash
+$ itkconfigurator
+```
+
+You should see the utility run in the terminal thus:
+
+![](docs/assets/itk-configurator-main-screen.png)
+
+3. Close the utility by selecting 'exit' and pressing 'enter'.
+
+### Clone the ITK Repository
+
+1. Choose a location to install the ITK code on host 3, on a linux or mac machine, for testing purposes, it is sensible
+   to put this in your users home directory to eliminate file permission issues; e.g. `~/mojaloopitk/`
+2. `cd` into your new directory and clone the ITK repository thus:
+
+```bash
+$ git clone git@github.com:mojaloop/integration-toolkit.git
+```
+
+### Creating Cryptographic Keys and Certificates
+
+> Note: For the purposes of this test, the certificate authority, client and server certificates, and JWS keys on both
+> sides of
+> the Mojaloop connection will be identical. This would never be recommended in a production scenario but it means we only
+> need to generate a single set of keys. Both sides of the connection will still have to perform the same cryptographic
+> operations as if the keys and certificates were different. This has no effect on test results but allows us to
+> include the overhead of the cryptographic operations in our performance data.
+
+1. `cd` into the ITK repository directory and then into the sub-directory `itk-minimal/resources`.
+2. Copy the secrets sub-directory created on host 2 in the steps above to host 3 using the following command:
+
+_Note: Replace 'username' with your host 2 username and 'path/to/secrets/' with the absolute path to the secrets
+directory in the command below. You will be prompted to enter the password for your host 2 user account unless you
+have configured ssh key authentication_
+
+```bash
+$ scp -r username@host2:/path/to/secrets ./secrets
+```
+
+5. Verify that the secrets were copied successfully:
+
+```bash
+$ ls ./secrets
+```
+
+You should see a directory listing showing the same contents as on host 2.
+
 ### Configuring the Load Generation Side Connector
 
-### Configuring the ITK Side Connector
+1. Run the itkconfigurator utility:
 
+```bash
+$ itkconfigurator mc=./mojaloop-connector.env
+```
 
+2. Navigate to the 'Edit Organisation Settings' (selected by default) button and press 'enter'.
+
+![](docs/assets/itk-configurator-org-settings.png)
+
+3. Change the 'DFSP ID' value from `mojaloop-sdk` to `host3`, select 'done' and press 'enter'.
+4. Navigate to the 'Edit Scheme Settings' button and press 'enter'.
+
+![](docs/assets/itk-configurator-scheme-settings.png)
+
+5. Change the 'Hub Endpoint' value to 'host2:4040', select 'done' and press 'enter'.
+6. Navigate to the 'Connection Security Settings' button and press 'enter'.
+
+![](docs/assets/itk-configurator-conn-sec-settings.png)
+
+7. Change the values to match those show in the screenshot above.
+8. Select 'done' and press 'enter.'
+9. Navigate to the 'Non-repudiation Settings' button and press 'enter'.
+
+![](docs/assets/itk-configurator-jws-settings.png)
+
+10. Check the 'Validate inbound JWS' and 'Enable JWS Signing' checkboxes as per the screenshot above, select 'done' and
+    press 'enter'.
+11. Return to the main screen, navigate the 'Exit' button and press 'enter'. When prompted to save changes, ensure 'Yes'
+    is highlighted and press 'enter'.
+
+## 4. Running the Test
+
+1. Start the Mojaloop Connector and k6 on host 3:
+
+```bash
+$ docker compose -f ./docker-compose-load-test.yml up
+```
+
+You should see the docker containers start and begin logging output to the terminal.
+
+The k6 docker container will write a summary to the terminal at the end of the test. You can validate that funds have
+been sent correctly via the Mifos portal on host 1.
