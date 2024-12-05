@@ -6,7 +6,7 @@ The artifacts in this repository facilitate load testing of ITK components.
 
 The scenario provided simulates savings deposit transactions from mobile wallets to a small Microfinance institution.
 
-![ITK-load-test-scenario.jpg](assets%2FITK-load-test-scenario.jpg)
+![ITK-load-test-scenario.jpg](docs/assets/ITK-load-test-scenario.jpg)
 
 Note that this procedure has only been tested on Fedora Linux 37. It should also work on similar Linux distrubutions,
 mac and windows although you may encounter issues.
@@ -229,7 +229,7 @@ $ cp serverkey.pem clientkey.pem
    copy the keys thus:
 
 ```bash
-$ mkdir ./secrets/iwsValidationKeys
+$ mkdir ./secrets/jwsValidationKeys
 $ cp jwsPublicKey.pem ./jwsValidationKeys/host2.pem
 $ cp jwsPublicKey.pem ./jwsValidationKeys/host3.pem
 ```
@@ -386,6 +386,9 @@ $ docker compose -f ./docker-compose-load-test.yml up
 ```
 
 You should see the docker containers start and begin logging output to the terminal.
+
+As the test proceeds you should see the various containers across all three hosts writing log messages to the terminal
+sessions.
 
 The k6 docker container will write a summary to the terminal at the end of the test. You can validate that funds have
 been sent correctly via the Mifos portal on host 1.
