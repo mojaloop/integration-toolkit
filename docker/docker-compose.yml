@@ -213,9 +213,35 @@ services:
       - mojaloop
     restart: unless-stopped
 
+  # Observability agent — ships SDK/host metrics and container logs to the hub
+  # operator's monitoring stack. Opt-in: docker compose --profile obs up -d
+  # Requires OBS_REMOTE_WRITE_URL and OBS_LOKI_URL in .env.
+  alloy:
+    image: grafana/alloy:v1.10.2
+    profiles: ["obs"]
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+    environment:
+      - DFSP_ID=${DFSP_ID}
+      - OBS_REMOTE_WRITE_URL=${OBS_REMOTE_WRITE_URL}
+      - OBS_LOKI_URL=${OBS_LOKI_URL}
+    volumes:
+      - ./observability/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - alloy-data:/var/lib/alloy/data
+    networks:
+      - mojaloop
+    restart: unless-stopped
+
 volumes:
   vault-data:
   vault-creds:
+  alloy-data:
 
 networks:
   mojaloop:

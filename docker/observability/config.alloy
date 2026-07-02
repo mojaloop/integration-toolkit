@@ -1,0 +1,89 @@
+// Grafana Alloy — DFSP-side observability agent (opt-in, compose profile "obs").
+// Scrapes sdk-scheme-adapter Prometheus metrics + host metrics, tails container
+// logs, and ships everything to the hub operator's observability endpoints
+// (OBS_REMOTE_WRITE_URL / OBS_LOKI_URL in .env).
+// All series and log streams are labelled cluster_name=<DFSP_ID>.
+
+/********************************************
+ * METRICS
+ ********************************************/
+
+// sdk-scheme-adapter exposes Prometheus metrics on METRICS_SERVER_LISTEN_PORT (4004)
+prometheus.scrape "sdk_scheme_adapter" {
+  targets = [{
+    __address__ = "sdk-scheme-adapter:4004",
+    service     = "sdk-scheme-adapter",
+  }]
+  forward_to = [prometheus.remote_write.hub.receiver]
+
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+}
+
+// Host (VM) metrics via the embedded node exporter
+prometheus.exporter.unix "host" {
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/rootfs"
+}
+
+prometheus.scrape "host" {
+  targets    = prometheus.exporter.unix.host.targets
+  forward_to = [prometheus.remote_write.hub.receiver]
+
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+}
+
+prometheus.remote_write "hub" {
+  endpoint {
+    url = sys.env("OBS_REMOTE_WRITE_URL")
+
+    // Hub gateway uses a private CA
+    tls_config {
+      insecure_skip_verify = true
+    }
+  }
+
+  external_labels = {
+    cluster_name = sys.env("DFSP_ID"),
+  }
+}
+
+/********************************************
+ * LOGS
+ ********************************************/
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Compose service name (sdk-scheme-adapter, mcm-agent, ...)
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.write.hub.receiver]
+}
+
+loki.write "hub" {
+  endpoint {
+    url = sys.env("OBS_LOKI_URL")
+
+    tls_config {
+      insecure_skip_verify = true
+    }
+  }
+
+  external_labels = {
+    cluster_name = sys.env("DFSP_ID"),
+  }
+}
