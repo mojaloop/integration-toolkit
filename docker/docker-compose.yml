@@ -120,7 +120,8 @@ services:
     restart: unless-stopped
 
   sdk-scheme-adapter:
-    image: kirgene/sdk-scheme-adapter:jws-fix
+    # Override with SDK_IMAGE in .env (e.g. official mojaloop/sdk-scheme-adapter:vX)
+    image: ${SDK_IMAGE:-kirgene/sdk-scheme-adapter:jws-fix}
     command:
       - sh
       - -c
