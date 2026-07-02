@@ -19,6 +19,7 @@ services:
       DFSP_FQDN: ${DFSP_FQDN}
       HUB_EXTAPI_FQDN: ${HUB_EXTAPI_FQDN}
       DFSP_CURRENCIES: ${DFSP_CURRENCIES:-XXX}
+      OIDC_TOKEN_ROUTE: oauth2/token
     entrypoint: ["/sbin/tini", "--", "sh", "-c"]
     command:
       - |
