@@ -214,6 +214,16 @@ services:
       - mojaloop
     restart: unless-stopped
 
+  # Redis metrics for the observability profile (SDK cache/pub-sub health)
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0-alpine
+    profiles: ["obs"]
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    networks:
+      - mojaloop
+    restart: unless-stopped
+
   # Observability agent — ships SDK/host metrics and container logs to the hub
   # operator's monitoring stack. Opt-in: docker compose --profile obs up -d
   # Requires OBS_REMOTE_WRITE_URL and OBS_LOKI_URL in .env.
