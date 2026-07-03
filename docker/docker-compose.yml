@@ -113,6 +113,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_REPLICATION_MODE=master
       - REDIS_TLS_ENABLED=no
+      - REDIS_EXTRA_FLAGS=--maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "${HOST_PORT_REDIS:-6379}:6379"
     networks:
@@ -176,6 +177,8 @@ services:
       - WSO2_BEARER_TOKEN=7718fa9b-be13-3fe7-87f0-a12cf1628168
       - RESERVE_NOTIFICATION=true
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      #
+      - REDIS_CACHE_TTL=600
     volumes:
       - ./secrets/inbound-cacert.pem:/secrets/inbound-cacert.pem:ro
       - ./secrets/inbound-cert.pem:/secrets/inbound-cert.pem:ro
