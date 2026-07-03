@@ -84,7 +84,7 @@ services:
     networks:
       - mojaloop
     healthcheck:
-      test: wget --quiet --spider http://127.0.0.1:8200/v1/sys/health?sealedcode=200&uninitcode=200
+      test: ["CMD-SHELL", "wget --quiet --spider 'http://127.0.0.1:8200/v1/sys/health?sealedcode=200&uninitcode=200'"]
       interval: 3s
       timeout: 2s
       retries: 10

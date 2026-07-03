@@ -16,6 +16,14 @@ vault_api() {
     fi
 }
 
+# Wait for vault to accept connections (the compose healthcheck can race a
+# cold first boot; connect-refused here used to kill the script via set -e)
+for i in $(seq 1 30); do
+    if curl -s -o /dev/null "$VAULT_ADDR/v1/sys/health"; then break; fi
+    echo "Waiting for vault to listen ($i/30)..."
+    sleep 2
+done
+
 # Check if vault is already initialized
 HEALTH=$(curl -s "$VAULT_ADDR/v1/sys/health" || echo '{}')
 INITIALIZED=$(echo "$HEALTH" | jq -r '.initialized // false')
