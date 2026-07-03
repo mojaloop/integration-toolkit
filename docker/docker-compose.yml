@@ -121,7 +121,7 @@ services:
 
   sdk-scheme-adapter:
     # Override with SDK_IMAGE in .env (e.g. official mojaloop/sdk-scheme-adapter:vX)
-    image: ${SDK_IMAGE:-kirgene/sdk-scheme-adapter:latest}
+    image: ${SDK_IMAGE:-mojaloop/sdk-scheme-adapter:latest}
     command:
       - sh
       - -c
