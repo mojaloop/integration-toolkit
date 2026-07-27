@@ -116,23 +116,18 @@ If the agent sits at "pending signature" for a long time, that is a coordination
 
 ## Reference: observability (`obs` profile)
 
-Opt-in profile that ships telemetry to an observability backend **the participant brings** — any Prometheus remote-write + Loki pair: the participant's own stack, or the hub operator's Tooling Cluster if they offer endpoints. It adds two services: **Grafana Alloy** (scrapes SDK and host metrics, tails all container logs, forwards both) and **redis-exporter** (Redis cache health). No extra host ports.
+Opt-in profile that ships telemetry to the participant's own observability backend — any Prometheus remote-write + Loki pair. It adds two services: **Grafana Alloy** (scrapes SDK and host metrics, tails all container logs, forwards both) and **redis-exporter** (Redis cache health). No extra host ports. This is participant-internal networking; nothing is shared with the hub.
 
-| Value | `.env` variable | On an MDK deployment |
+| Value | `.env` variable | Backend requirement |
 |---|---|---|
-| Metrics endpoint | `OBS_REMOTE_WRITE_URL` | Prometheus remote-write receiver (Thanos Receive on the Tooling Cluster) |
-| Logs endpoint | `OBS_LOKI_URL` | Loki push API on the Tooling Cluster |
+| Metrics endpoint | `OBS_REMOTE_WRITE_URL` | Prometheus remote-write receiver |
+| Logs endpoint | `OBS_LOKI_URL` | Loki push API |
 
 ```bash
 docker compose -p dfsp-201 --profile test --profile obs up -d   # profiles combine
 ```
 
-All shipped series and log streams are labelled `cluster_name=<DFSP_ID>` — that label identifies the participant's data in whichever Grafana sits on top. See [`docker/observability/config.alloy`](../docker/observability/config.alloy) for exactly what is collected.
-
-Worth knowing:
-
-- When the participant reuses the Hub operator's Tooling Cluster, that telemetry is the only shared visibility between the two organisations; otherwise each side operates blind to the other's internals.
-- The Alloy agent skips TLS verification toward these endpoints, because they may present a certificate from a private CA. The data still flows over TLS; the server identity is not verified.
+All shipped series and log streams are labelled `cluster_name=<DFSP_ID>`. Note that the Alloy agent skips TLS verification toward these endpoints (they may sit behind a private CA). See [`docker/observability/config.alloy`](../docker/observability/config.alloy) for exactly what is collected.
 
 ## Reference: certificate trust — the scheme CA
 

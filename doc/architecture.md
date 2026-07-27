@@ -39,7 +39,7 @@ ITK packages those moving parts as a small, self-contained Docker Compose stack 
 | **SDK Scheme Adapter** | Speaks FSPIOP, terminates mTLS in both directions, signs and validates JWS, handles ILP, adapts async scheme traffic to a synchronous backend API | The reference Mojaloop connector — the same component used across Mojaloop deployments, composed rather than reimplemented |
 | **Redis** | The adapter's state cache | Required by the SDK for in-flight transfer state and callback correlation |
 | **Simulator backend** *(test profile)* | Stand-in core banking system | Lets the participant bring the scheme connection fully live before the core-banking integration exists |
-| **Grafana Alloy** *(obs profile)* | Ships metrics and logs to the participant's observability backend — its own server, or the hub operator's Tooling Cluster if reused | Optional, opt-in — see [trust boundaries](#trust-boundaries) |
+| **Grafana Alloy** *(obs profile)* | Ships metrics and logs to the participant's observability backend | Optional, opt-in |
 
 Certificate rotation deserves the highlight: when the agent obtains new certificates, it pushes them to the running SDK over its control channel. **No restart, no traffic interruption, no operator action.**
 
@@ -57,7 +57,7 @@ The points that matter when deciding whether to adopt the toolkit, rather than b
 
 **Small operational footprint.** Docker Compose on a single VM. No Kubernetes, no orchestration platform, no dedicated team. The trade-off is deliberate: single-instance, not highly available — see [operational profile](#operational-profile).
 
-**Observability stays with the participant.** The telemetry agent is a separate opt-in profile, and its backend is one the participant brings — any Prometheus remote-write and Loki pair, typically an existing observability server. Pointing it at the hub operator's Tooling Cluster instead is a choice, not a default; that is the only configuration in which either side sees the other's internals, and the participant decides when it starts and stops.
+**Observability stays with the participant.** The telemetry agent is a separate opt-in profile, and its backend is one the participant brings — any Prometheus remote-write and Loki pair, typically an existing observability server. Telemetry is participant-internal networking; nothing about it is visible to, or shared with, the hub.
 
 **One hub contract.** The toolkit works against any Mojaloop hub exposing the FSPIOP and Connection Manager APIs. A hub deployed with the [ML Deployment Toolkit](https://github.com/mojaloop/ml-deployment-toolkit) is the reference implementation of that contract, and the [integration guide](integration.md) uses its endpoint shapes as the worked example — valid for any compatible hub.
 
@@ -78,8 +78,6 @@ What this buys the participant:
 - **Compromise is compartmentalised.** A breach on either side does not yield the other side's key material.
 - **All traffic across the boundary is mutually authenticated.** FSPIOP runs over mTLS with certificates chained to the scheme CA, plus per-message JWS signatures — transport *and* message-level integrity.
 
-One caveat to state honestly: the optional telemetry channel skips TLS server verification toward its endpoints (they may sit behind a private CA). Metrics and logs are operational data, not payment traffic, and the channel is opt-in — but when a participant points it at the hub operator's Tooling Cluster, it becomes the one flow across the boundary without full mutual authentication.
-
 ## Operational profile
 
 What the stack asks of the participant's operations team in steady state:
@@ -98,7 +96,7 @@ Everything else — enrolment, rotation, live reconfiguration of the SDK — is 
 
 MDK and ITK are the two sides of one scheme:
 
-- **MDK** is what the *hub operator* deploys and operates — the Mojaloop switch, the Connection Manager, IAM, and optionally a Tooling Cluster whose observability backend participants may reuse instead of running their own.
+- **MDK** is what the *hub operator* deploys and operates — the Mojaloop switch, the Connection Manager, IAM, and optionally a Tooling Cluster hosting the hub-side observability backend.
 - **ITK** (this repository) is what each *participant* runs to connect to it.
 
 The documentation splits along the same line: MDK's [Participant guide](https://github.com/mojaloop/ml-deployment-toolkit/blob/main/doc/participant/index.md) owns the onboarding journey and the two-party [choreography](https://github.com/mojaloop/ml-deployment-toolkit/blob/main/doc/architecture/participant-integration.md#the-choreography); this repository owns everything that runs on the participant's machine — the [integration guide](integration.md), which maps each hub value to its ITK variable and walks the connection to a verified state.
