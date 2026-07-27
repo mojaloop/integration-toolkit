@@ -1,6 +1,7 @@
 services:
   mcm-agent:
-    image: ndelma/mcm-agent:0.1.1
+    # Override with MCM_AGENT_IMAGE in .env
+    image: ${MCM_AGENT_IMAGE:-mojaloop/mcm-agent:latest}
     ports:
       - "${HOST_PORT_MCM:-3001}:3000"
     environment:
@@ -228,8 +229,8 @@ services:
       - mojaloop
     restart: unless-stopped
 
-  # Observability agent — ships SDK/host metrics and container logs to the hub
-  # operator's monitoring stack. Opt-in: docker compose --profile obs up -d
+  # Observability agent — ships SDK/host metrics and container logs to your
+  # observability backend. Opt-in: docker compose --profile obs up -d
   # Requires OBS_REMOTE_WRITE_URL and OBS_LOKI_URL in .env.
   alloy:
     image: grafana/alloy:v1.10.2
