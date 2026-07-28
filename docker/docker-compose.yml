@@ -1,0 +1,264 @@
+services:
+  mcm-agent:
+    # Override with MCM_AGENT_IMAGE in .env
+    image: ${MCM_AGENT_IMAGE:-mojaloop/mcm-agent:latest}
+    ports:
+      - "${HOST_PORT_MCM:-3001}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: 0.0.0.0
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      VAULT_ENDPOINT: http://vault:8200
+      VAULT_AUTH_ROLE_ID_PATH: /vault/role-id
+      VAULT_AUTH_SECRET_ID_PATH: /vault/secret-id
+      DFSP_ID: ${DFSP_ID}
+      MCM_SERVER_ENDPOINT: ${MCM_SERVER_ENDPOINT}
+      HUB_IAM_PROVIDER_URL: ${HUB_IAM_PROVIDER_URL}
+      AUTH_CLIENT_ID: ${AUTH_CLIENT_ID}
+      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET}
+      DFSP_FQDN: ${DFSP_FQDN}
+      HUB_EXTAPI_FQDN: ${HUB_EXTAPI_FQDN}
+      DFSP_CURRENCIES: ${DFSP_CURRENCIES:-XXX}
+      OIDC_TOKEN_ROUTE: oauth2/token
+    entrypoint: ["/sbin/tini", "--", "sh", "-c"]
+    command:
+      - |
+        cat > /app/config/default.json <<ENDJSON
+        {
+          "common": {"dfspId": "$DFSP_ID"},
+          "mcm": {
+            "serverEndpoint": "$MCM_SERVER_ENDPOINT",
+            "hubIamProviderUrl": "$HUB_IAM_PROVIDER_URL",
+            "auth": {"enabled": true, "creds": {"clientId": "$AUTH_CLIENT_ID", "clientSecret": "$AUTH_CLIENT_SECRET"}}
+          },
+          "sdk": {
+            "fqdn": "$DFSP_FQDN",
+            "callbackUrl": "https://$DFSP_FQDN:443",
+            "peerEndpoint": "$HUB_EXTAPI_FQDN:443",
+            "alsEndpoint": "$HUB_EXTAPI_FQDN:443",
+            "currencies": ["$DFSP_CURRENCIES"],
+            "whitelistIp": ["0.0.0.0/0"],
+            "tls": {"outboundMutual": true, "inboundMutual": true},
+            "jws": {"sign": true, "validateInbound": false},
+            "autoAccept": {"party": true, "quotes": true},
+            "pm4mlEnabled": true
+          },
+          "dfspCaCsrParameters": {"subject": {"CN": "$DFSP_ID CA", "O": "$DFSP_ID"}},
+          "dfspClientCsrParameters": {"subject": {"CN": "$DFSP_ID"}},
+          "dfspServerCsrParameters": {"subject": {"CN": "$DFSP_FQDN"}, "extensions": {"subjectAltName": {"dns": ["$DFSP_FQDN"]}}}
+        }
+        ENDJSON
+        exec npm start
+    volumes:
+      - vault-creds:/vault:ro
+    networks:
+      - mojaloop
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://127.0.0.1:3000/health
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  vault:
+    image: hashicorp/vault:1.20
+    command: server
+    ports:
+      - "${HOST_PORT_VAULT:-8200}:8200"
+    restart: always
+    tty: true
+    stdin_open: true
+    environment:
+      VAULT_ADDR: http://127.0.0.1:8200
+      VAULT_API_ADDR: http://0.0.0.0:8200
+      VAULT_LOCAL_CONFIG: '{"listener": [{"tcp": {"address": "0.0.0.0:8200", "tls_disable": true}}], "storage": {"file": {"path": "/vault/data"}}, "default_lease_ttl": "8760h", "max_lease_ttl": "87600h", "ui": true}'
+    volumes:
+      - vault-data:/vault/data
+      - vault-creds:/vault/creds
+      - ./vault/docker-entrypoint.sh:/usr/local/bin/docker-entrypoint.sh:ro
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - mojaloop
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider 'http://127.0.0.1:8200/v1/sys/health?sealedcode=200&uninitcode=200'"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  vault-init:
+    image: alpine:latest
+    environment:
+      VAULT_ADDR: http://vault:8200
+    volumes:
+      - vault-data:/vault/data
+      - vault-creds:/vault/creds
+      - ./vault/vault-init.sh:/vault-init.sh:ro
+    depends_on:
+      vault:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["apk add --no-cache curl jq && /vault-init.sh"]
+    restart: "no"
+    networks:
+      - mojaloop
+
+  redis:
+    image: bitnami/redis
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+      - REDIS_PORT=6379
+      - REDIS_REPLICATION_MODE=master
+      - REDIS_TLS_ENABLED=no
+      - REDIS_EXTRA_FLAGS=--maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "${HOST_PORT_REDIS:-6379}:6379"
+    networks:
+      - mojaloop
+    restart: unless-stopped
+
+  sdk-scheme-adapter:
+    # Override with SDK_IMAGE in .env (e.g. official mojaloop/sdk-scheme-adapter:vX)
+    image: ${SDK_IMAGE:-mojaloop/sdk-scheme-adapter:latest}
+    command:
+      - sh
+      - -c
+      - "yarn start:api-svc"
+    ports:
+      - "${HOST_PORT_SDK_INBOUND:-4000}:4000"
+      - "${HOST_PORT_SDK_OUTBOUND:-4001}:4001"
+    environment:
+      - DFSP_ID=${DFSP_ID}
+      - API_TYPE=fspiop
+      - ILP_VERSION=4
+      - CACHE_URL=redis://redis:6379
+      - ENABLE_OAUTH_TOKEN_ENDPOINT=false
+      - ENABLE_BACKEND_EVENT_HANDLER=false
+      - ENABLE_FSPIOP_EVENT_HANDLER=false
+      - ENABLE_TEST_FEATURES=true
+      - INBOUND_LISTEN_PORT=4000
+      - OUTBOUND_LISTEN_PORT=4001
+      # Bootstrap defaults — replaced by MCM Agent via WS once PM4ML connects
+      - PEER_ENDPOINT=${HUB_EXTAPI_FQDN}:443
+      - ALS_ENDPOINT=${HUB_EXTAPI_FQDN}:443
+      - QUOTES_ENDPOINT=${HUB_EXTAPI_FQDN}:443
+      - TRANSFERS_ENDPOINT=${HUB_EXTAPI_FQDN}:443
+      - TRANSACTION_REQUESTS_ENDPOINT=${HUB_EXTAPI_FQDN}:443
+      - BULK_QUOTES_ENDPOINT=${HUB_EXTAPI_FQDN}:443
+      - BULK_TRANSFERS_ENDPOINT=${HUB_EXTAPI_FQDN}:443
+      # mTLS
+      - OUTBOUND_MUTUAL_TLS_ENABLED=true
+      - INBOUND_MUTUAL_TLS_ENABLED=true
+      - IN_CA_CERT_PATH=/secrets/inbound-cacert.pem
+      - IN_SERVER_CERT_PATH=/secrets/inbound-cert.pem
+      - IN_SERVER_KEY_PATH=/secrets/inbound-key.pem
+      # JWS
+      - JWS_SIGN=true
+      - VALIDATE_INBOUND_JWS=true
+      - JWS_SIGNING_KEY_PATH=/jwsSigningKey.key
+      - JWS_VERIFICATION_KEYS_DIRECTORY=/jwsVerificationKeys
+      # Core connector
+      - BACKEND_ENDPOINT=${BACKEND_ENDPOINT}
+      # MCM Agent management API (PM4ML mode)
+      - PM4ML_ENABLED=true
+      - MGMT_API_WS_URL=mcm-agent
+      - MGMT_API_WS_PORT=4004
+      - METRICS_SERVER_LISTEN_PORT=4004
+      - MULTIPLE_PARTIES_RESPONSE=false
+      - RESOURCE_VERSIONS=transfers=2.0,quotes=2.0,participants=2.0,parties=2.0,transactionRequests=1.1
+      - FSPIOP_API_SERVER_MAX_REQUEST_BYTES=209715200
+      - BACKEND_API_SERVER_MAX_REQUEST_BYTES=209715200
+      - AUTO_ACCEPT_QUOTES=true
+      - AUTO_ACCEPT_PARTY=true
+      - USE_QUOTE_SOURCE_FSP_AS_TRANSFER_PAYEE_FSP=false
+      - WSO2_BEARER_TOKEN=7718fa9b-be13-3fe7-87f0-a12cf1628168
+      - RESERVE_NOTIFICATION=true
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      #
+      - REDIS_CACHE_TTL=600
+    volumes:
+      - ./secrets/inbound-cacert.pem:/secrets/inbound-cacert.pem:ro
+      - ./secrets/inbound-cert.pem:/secrets/inbound-cert.pem:ro
+      - ./secrets/inbound-key.pem:/secrets/inbound-key.pem:ro
+      - ./secrets/jwsSigningKey.key:/jwsSigningKey.key:ro
+      - ./secrets/jwsVerificationKeys:/jwsVerificationKeys:ro
+    networks:
+      - mojaloop
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # Mojaloop Simulator — test-only core-connector stand-in.
+  # Enabled with: docker compose --profile test up
+  # In production, deploy your own core banking system and set BACKEND_ENDPOINT.
+  sim-backend:
+    image: mojaloop/mojaloop-simulator:v15.5.4
+    profiles: ["test"]
+    ports:
+      - "${HOST_PORT_SIM:-3003}:3000"
+      - "${HOST_PORT_SIM_TEST:-3004}:3003"
+    environment:
+      - DFSP_ID=${DFSP_ID}
+      - OUTBOUND_ENDPOINT=http://sdk-scheme-adapter:4001
+      - SIMULATOR_API_LISTEN_PORT=3000
+      - REPORT_API_LISTEN_PORT=3002
+      - TEST_API_LISTEN_PORT=3003
+      - "MODEL_DATABASE=:memory:"
+      - FEE_MULTIPLIER=0.05
+      - MUTUAL_TLS_ENABLED=false
+      - HTTPS_ENABLED=false
+      - RULES_FILE=/rules/rules.json
+    volumes:
+      - ./sim-backend/rules.json:/rules/rules.json:ro
+    networks:
+      - mojaloop
+    restart: unless-stopped
+
+  # Redis metrics for the observability profile (SDK cache/pub-sub health)
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0-alpine
+    profiles: ["obs"]
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    networks:
+      - mojaloop
+    restart: unless-stopped
+
+  # Observability agent — ships SDK/host metrics and container logs to your
+  # observability backend. Opt-in: docker compose --profile obs up -d
+  # Requires OBS_REMOTE_WRITE_URL and OBS_LOKI_URL in .env.
+  alloy:
+    image: grafana/alloy:v1.10.2
+    profiles: ["obs"]
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+    environment:
+      - DFSP_ID=${DFSP_ID}
+      - OBS_REMOTE_WRITE_URL=${OBS_REMOTE_WRITE_URL}
+      - OBS_LOKI_URL=${OBS_LOKI_URL}
+    volumes:
+      - ./observability/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - alloy-data:/var/lib/alloy/data
+    networks:
+      - mojaloop
+    restart: unless-stopped
+
+volumes:
+  vault-data:
+  vault-creds:
+  alloy-data:
+
+networks:
+  mojaloop:
+    driver: bridge
