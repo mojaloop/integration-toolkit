@@ -9,6 +9,7 @@ Confirm the connection works — from the agent state, to a party lookup, to a c
 - [The connection is live](#the-connection-is-live)
 - [Register a test party](#register-a-test-party)
 - [Send a test transfer](#send-a-test-transfer)
+- [The three phases — driving a transfer the production way](#the-three-phases--driving-a-transfer-the-production-way)
 - [If a transfer fails](#if-a-transfer-fails)
 
 ## The connection is live
@@ -66,6 +67,74 @@ curl -X POST http://localhost:4001/transfers \
 **Expected:** `"currentState": "COMPLETED"`. The response carries the whole exchange — party lookup, quote, and transfer — which completes in a few seconds end to end; on a warm hub the round trip is on the order of a second.
 
 The Hub operator can confirm from their side that positions moved by the transfer amount.
+
+## The three phases — driving a transfer the production way
+
+The one-shot `/transfers` call above chains discovery, agreement, and fulfilment with no opportunity to stop, which is exactly right for proving the connection. A production core-banking integration does not use it: it needs to stop twice — after discovery, to confirm the payee is who the customer meant, and after the quote, to show the customer the terms and obtain consent before money moves. Each phase is one call to the SDK outbound API; the caller owns the identifiers, and carries two artifacts from phase 2 into phase 3 untouched.
+
+### Phase 1 — Discovery: who serves the payee
+
+```bash
+PARTY=$(curl -s http://localhost:4001/parties/MSISDN/<payee-msisdn> \
+  -H 'accept: application/json')
+PAYEE_FSP=$(echo "$PARTY" | jq -r '.party.body.partyIdInfo.fspId')
+```
+
+The response names the payee's FSP and carries the party's name — the value the customer confirms before anything else happens. Nothing is reserved or committed; discovery is safe to repeat. The result is short-lived routing information, not something to cache across transfers.
+
+### Phase 2 — Agreement: the quote is the contract
+
+The caller mints `quoteId` and `transactionId` (UUIDs) and asks the payee side for terms:
+
+```bash
+QUOTE=$(curl -s -X POST http://localhost:4001/quotes \
+  -H 'content-type: application/json' \
+  -d '{
+    "fspId": "'"$PAYEE_FSP"'",
+    "quotesPostRequest": {
+      "quoteId": "'"$(uuidgen | tr 'A-Z' 'a-z')"'",
+      "transactionId": "'"$TRANSACTION_ID"'",
+      "payer": { "partyIdInfo": { "partyIdType": "MSISDN", "partyIdentifier": "<payer-msisdn>", "fspId": "<DFSP_ID>" } },
+      "payee": { "partyIdInfo": { "partyIdType": "MSISDN", "partyIdentifier": "<payee-msisdn>", "fspId": "'"$PAYEE_FSP"'" } },
+      "amountType": "SEND",
+      "amount": { "amount": "10", "currency": "<currency>" },
+      "transactionType": { "scenario": "TRANSFER", "initiator": "PAYER", "initiatorType": "CONSUMER" }
+    }
+  }')
+ILP_PACKET=$(echo "$QUOTE" | jq -r '.quotes.body.ilpPacket')
+CONDITION=$(echo "$QUOTE" | jq -r '.quotes.body.condition')
+```
+
+The response is the payee side's binding offer: the amount breakdown including any fees — what the customer accepts or declines — plus two cryptographic artifacts, `ilpPacket` and `condition`, which *are* the agreed terms. A quote carries its own expiration; a customer who walks away simply lets it lapse, and nothing has moved.
+
+### Phase 3 — Fulfilment: execute the agreed quote
+
+```bash
+curl -s -X POST http://localhost:4001/simpleTransfers \
+  -H 'content-type: application/json' \
+  -d '{
+    "fspId": "'"$PAYEE_FSP"'",
+    "transfersPostRequest": {
+      "transferId": "'"$TRANSACTION_ID"'",
+      "payerFsp": "<DFSP_ID>",
+      "payeeFsp": "'"$PAYEE_FSP"'",
+      "amount": { "amount": "10", "currency": "<currency>" },
+      "ilpPacket": "'"$ILP_PACKET"'",
+      "condition": "'"$CONDITION"'",
+      "expiration": "<now + 60s, ISO 8601>"
+    }
+  }' | jq .
+```
+
+`transferId` is conventionally the `transactionId` from phase 2 — that is what links the transfer to its agreement end to end. `ilpPacket` and `condition` travel **byte-for-byte as received**: they are cryptographically bound to the quote, so any re-encoding or re-serialization makes the fulfilment fail. The `expiration` is short — around 60 seconds — so a transfer that cannot complete expires cleanly instead of hanging. This is the only phase where positions move; success is the payee's fulfilment coming back and the ledger committing.
+
+### What the caller owns, and what it must not touch
+
+| Caller mints | Carried verbatim |
+| --- | --- |
+| `quoteId`, `transactionId` (= `transferId`), `expiration`, trace context | `fspId` from discovery; `ilpPacket` and `condition` from the quote |
+
+One more habit worth adopting from the start: pass the same [`traceparent`](https://www.w3.org/TR/trace-context/) header on all three calls. The hub joins them into one end-to-end trace, so its transfer-journey dashboards see one transfer instead of three fragments.
 
 ## If a transfer fails
 

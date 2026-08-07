@@ -61,7 +61,7 @@ The bundled simulator stands in for a core banking system. To go live with a rea
 BACKEND_ENDPOINT=<connector-host:port>
 ```
 
-The connector must implement the Mojaloop SDK backend API over plain HTTP — it is an internal, participant-side interface, with no TLS and no auth — and be reachable from the SDK's container network. The API is documented in the SDK scheme adapter project. Start the stack **without** the `test` profile once the real backend is in place:
+The connector must implement the Mojaloop SDK backend API over plain HTTP — it is an internal, participant-side interface, with no TLS and no auth — and be reachable from the SDK's container network. The API is documented in the SDK scheme adapter project. On the outbound side, the connector drives the SDK phase by phase — discovery, quote, fulfilment — rather than through the one-shot verification call: [Verify → the three phases](verify.md#the-three-phases--driving-a-transfer-the-production-way). Start the stack **without** the `test` profile once the real backend is in place:
 
 ```bash
 docker compose up -d
