@@ -101,7 +101,7 @@ docker compose --profile test down -v   # -v also drops the vault volume
 
 ## 5. Enrol — the pause is not a failure
 
-Once the stack starts, the MCM Agent authenticates, submits a certificate signing request, and then **stops and waits**. This is the single most-reported "problem" that is not one.
+Once the stack starts, the MCM Agent authenticates, submits a certificate signing request, and then **stops and waits**. This is not a malfunction.
 
 Watch it:
 
