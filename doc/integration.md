@@ -73,16 +73,16 @@ These are throwaway self-signed placeholders that satisfy the SDK's start-up fil
 
 ```bash
 # Local test (with the bundled simulator as core-banking stand-in)
-docker compose -p dfsp-201 --profile test up -d
+docker compose --profile test up -d
 
 # Production (the participant's core banking system; set BACKEND_ENDPOINT first)
-docker compose -p dfsp-201 up -d
+docker compose up -d
 ```
 
 Tear down:
 
 ```bash
-docker compose -p dfsp-201 --profile test down -v   # -v also drops the vault volume
+docker compose --profile test down -v   # -v also drops the vault volume
 ```
 
 ## 5. Enrol — the pause is not a failure
@@ -124,7 +124,7 @@ Opt-in profile that ships telemetry to the participant's own observability backe
 | Logs endpoint | `OBS_LOKI_URL` | Loki push API |
 
 ```bash
-docker compose -p dfsp-201 --profile test --profile obs up -d   # profiles combine
+docker compose --profile test --profile obs up -d   # profiles combine
 ```
 
 All shipped series and log streams are labelled `cluster_name=<DFSP_ID>`. Note that the Alloy agent skips TLS verification toward these endpoints (they may sit behind a private CA). See [`docker/observability/config.alloy`](../docker/observability/config.alloy) for exactly what is collected.
