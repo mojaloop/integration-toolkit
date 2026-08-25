@@ -13,8 +13,11 @@ Everything runs on the participant's side; the hub operator never touches it.
 
 ## Where to start
 
-| You want to | Go to |
+| Goal | Go to |
 |---|---|
 | Evaluate the toolkit — the problem it solves, the design, the trust model | [`doc/architecture.md`](doc/architecture.md) |
 | Deploy the stack and connect to a hub | [`doc/integration.md`](doc/integration.md) |
+| Prove the connection end to end — party, lookup, transfer | [`doc/verify.md`](doc/verify.md) |
+| Keep it running — health, certificates, going live on a real core system | [`doc/operate.md`](doc/operate.md) |
+| Something looks wrong | [`doc/known-issues.md`](doc/known-issues.md) |
 | Generate the bootstrap certificates the SDK needs at first boot | [`scripts/gen-bootstrap-certs.sh`](scripts/gen-bootstrap-certs.sh) (invoked from the deploy flow) |
