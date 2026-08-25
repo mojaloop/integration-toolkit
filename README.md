@@ -13,7 +13,7 @@ Everything runs on the participant's side; the hub operator never touches it.
 
 ## Where to start
 
-| You want to | Go to |
+| Goal | Go to |
 |---|---|
 | Evaluate the toolkit — the problem it solves, the design, the trust model | [`doc/architecture.md`](doc/architecture.md) |
 | Deploy the stack and connect to a hub | [`doc/integration.md`](doc/integration.md) |
