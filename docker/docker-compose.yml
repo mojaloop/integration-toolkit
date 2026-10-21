@@ -1,7 +1,7 @@
 services:
   mcm-agent:
-    # Override with MCM_AGENT_IMAGE in .env
-    image: ${MCM_AGENT_IMAGE:-mojaloop/mcm-agent:latest}
+    # Set MCM_AGENT_IMAGE in .env (pinned in .env.sample)
+    image: ${MCM_AGENT_IMAGE:?set MCM_AGENT_IMAGE in .env (see .env.sample)}
     ports:
       - "${HOST_PORT_MCM:-3001}:3000"
     environment:
@@ -139,8 +139,8 @@ services:
     restart: unless-stopped
 
   sdk-scheme-adapter:
-    # Override with SDK_IMAGE in .env (e.g. official mojaloop/sdk-scheme-adapter:vX)
-    image: ${SDK_IMAGE:-mojaloop/sdk-scheme-adapter:latest}
+    # Set SDK_IMAGE in .env (pinned in .env.sample)
+    image: ${SDK_IMAGE:?set SDK_IMAGE in .env (see .env.sample)}
     command:
       - sh
       - -c
