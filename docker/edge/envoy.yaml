@@ -147,10 +147,13 @@ static_resources:
     # address for the service name; re-resolved often enough to follow
     # `docker compose up --scale`.
     - name: sdk_inbound
-      type: STRICT_DNS
-      dns_lookup_family: V4_ONLY
-      dns_refresh_rate: 5s
-      respect_dns_ttl: false
+      cluster_type: &sdk_dns
+        name: envoy.clusters.dns
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dns.v3.DnsCluster
+          dns_lookup_family: V4_ONLY
+          dns_refresh_rate: 5s
+          respect_dns_ttl: false
       lb_policy: LEAST_REQUEST
       circuit_breakers: &high_limits
         thresholds:
@@ -166,10 +169,7 @@ static_resources:
                     socket_address: { address: sdk-scheme-adapter, port_value: 4000 }
 
     - name: sdk_outbound
-      type: STRICT_DNS
-      dns_lookup_family: V4_ONLY
-      dns_refresh_rate: 5s
-      respect_dns_ttl: false
+      cluster_type: *sdk_dns
       lb_policy: LEAST_REQUEST
       circuit_breakers: *high_limits
       load_assignment:
