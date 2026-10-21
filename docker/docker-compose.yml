@@ -1,5 +1,14 @@
+# Container logs are kept small on disk: the observability agent ships them
+# (Docker logs API), and at load an unbounded json-file fills the host.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "2"
+
 services:
   mcm-agent:
+    logging: *default-logging
     # Set MCM_AGENT_IMAGE in .env (pinned in .env.sample)
     image: ${MCM_AGENT_IMAGE:?set MCM_AGENT_IMAGE in .env (see .env.sample)}
     ports:
@@ -65,6 +74,7 @@ services:
       retries: 5
 
   vault:
+    logging: *default-logging
     image: hashicorp/vault:1.20
     command: server
     ports:
@@ -91,6 +101,7 @@ services:
       retries: 10
 
   vault-init:
+    logging: *default-logging
     image: alpine:latest
     environment:
       VAULT_ADDR: http://vault:8200
@@ -110,6 +121,7 @@ services:
   # vault-init only runs on `compose up`; this keeps Vault unsealed after a
   # Vault or host restart so the mcm-agent recovers without a manual step.
   vault-unsealer:
+    logging: *default-logging
     image: curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69
     entrypoint: ["/bin/sh", "/vault-unseal.sh"]
     environment:
@@ -125,6 +137,7 @@ services:
     restart: unless-stopped
 
   redis:
+    logging: *default-logging
     image: bitnami/redis
     environment:
       - ALLOW_EMPTY_PASSWORD=yes
@@ -139,6 +152,7 @@ services:
     restart: unless-stopped
 
   sdk-scheme-adapter:
+    logging: *default-logging
     # Set SDK_IMAGE in .env (pinned in .env.sample)
     image: ${SDK_IMAGE:?set SDK_IMAGE in .env (see .env.sample)}
     command:
@@ -217,6 +231,7 @@ services:
   # edge proxy to a tmpfs volume, on start and on every renewal. Runs the
   # mcm-agent image for its WebSocket client; no image of its own.
   edge-config-agent:
+    logging: *default-logging
     image: ${MCM_AGENT_IMAGE:?set MCM_AGENT_IMAGE in .env (see .env.sample)}
     entrypoint: ["/sbin/tini", "--", "node", "/edge/config-agent.js"]
     user: "10001:10001"
@@ -246,6 +261,7 @@ services:
   # for the SDK's calls to the hub, and spreads requests across SDK replicas.
   # Only service with participant-facing host ports. See edge/envoy.yaml.
   edge-envoy:
+    logging: *default-logging
     image: ${EDGE_ENVOY_IMAGE:?set EDGE_ENVOY_IMAGE in .env (see .env.sample)}
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -280,6 +296,7 @@ services:
   # Enabled with: docker compose --profile test up
   # In production, deploy your own core banking system and set BACKEND_ENDPOINT.
   sim-backend:
+    logging: *default-logging
     image: mojaloop/mojaloop-simulator:v15.5.4
     profiles: ["test"]
     ports:
@@ -304,6 +321,7 @@ services:
 
   # Redis metrics for the observability profile (SDK cache/pub-sub health)
   redis-exporter:
+    logging: *default-logging
     image: oliver006/redis_exporter:v1.62.0-alpine
     profiles: ["obs"]
     environment:
@@ -316,6 +334,7 @@ services:
   # observability backend. Opt-in: docker compose --profile obs up -d
   # Requires OBS_REMOTE_WRITE_URL and OBS_LOKI_URL in .env.
   alloy:
+    logging: *default-logging
     image: grafana/alloy:v1.10.2
     profiles: ["obs"]
     command:
