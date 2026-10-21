@@ -1,5 +1,5 @@
 // Grafana Alloy — DFSP-side observability agent (opt-in, compose profile "obs").
-// Scrapes sdk-scheme-adapter Prometheus metrics + host metrics, tails container
+// Scrapes sdk-scheme-adapter (every replica), edge proxy and host metrics, tails container
 // logs, and ships everything to your observability endpoints
 // (OBS_REMOTE_WRITE_URL / OBS_LOKI_URL in .env).
 // All series and log streams are labelled cluster_name=<DFSP_ID>.
@@ -8,13 +8,58 @@
  * METRICS
  ********************************************/
 
-// sdk-scheme-adapter exposes Prometheus metrics on METRICS_SERVER_LISTEN_PORT (4004)
+// sdk-scheme-adapter exposes Prometheus metrics on METRICS_SERVER_LISTEN_PORT
+// (4004). The SDK runs as several replicas behind the edge, so targets come
+// from Docker, one per replica: a fixed service name would reach a single
+// replica per scrape. discovery.docker is defined in the LOGS section.
+discovery.relabel "sdk_scheme_adapter" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "sdk-scheme-adapter"
+    action        = "keep"
+  }
+  // The SDK is on two networks; scrape it once, on the one Alloy shares.
+  rule {
+    source_labels = ["__meta_docker_network_name"]
+    regex         = ".*_mojaloop"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_docker_network_ip"]
+    regex         = "(.+)"
+    replacement   = "$1:4004"
+    target_label  = "__address__"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "instance"
+  }
+  rule {
+    target_label = "service"
+    replacement  = "sdk-scheme-adapter"
+  }
+}
+
 prometheus.scrape "sdk_scheme_adapter" {
-  targets = [{
-    __address__ = "sdk-scheme-adapter:4004",
-    service     = "sdk-scheme-adapter",
-  }]
+  targets    = discovery.relabel.sdk_scheme_adapter.output
   forward_to = [prometheus.remote_write.hub.receiver]
+
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+}
+
+// Edge proxy: per-listener and per-cluster traffic, TLS handshakes and
+// failures, and per-SDK-replica request counts (cluster sdk_inbound).
+prometheus.scrape "edge_envoy" {
+  targets = [{
+    __address__ = "edge-envoy:9902",
+    service     = "edge-envoy",
+  }]
+  metrics_path = "/stats/prometheus"
+  forward_to   = [prometheus.remote_write.hub.receiver]
 
   scrape_interval = "15s"
   scrape_timeout  = "10s"
