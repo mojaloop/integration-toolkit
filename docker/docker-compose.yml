@@ -335,7 +335,9 @@ services:
   # Requires OBS_REMOTE_WRITE_URL and OBS_LOKI_URL in .env.
   alloy:
     logging: *default-logging
-    image: grafana/alloy:v1.10.2
+    # >= v1.14 for a cAdvisor that understands Docker's containerd image store
+    # (the default since Docker 29); older versions see no containers.
+    image: grafana/alloy:v1.20.1@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
     profiles: ["obs"]
     command:
       - run
@@ -357,6 +359,7 @@ services:
       - /sys:/host/sys:ro
       - /sys/fs/cgroup:/sys/fs/cgroup:ro
       - /var/lib/docker:/var/lib/docker:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
       - /:/rootfs:ro
       - alloy-data:/var/lib/alloy/data
     networks:
