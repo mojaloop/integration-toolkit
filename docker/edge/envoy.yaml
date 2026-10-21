@@ -1,0 +1,223 @@
+# Participant edge proxy.
+#
+# Takes mutual TLS out of the SDK so each SDK instance does less work and the
+# SDK can be scaled behind the edge, with load spread per request:
+#
+#   :8443  hub -> participant. Terminates the hub's mTLS (client certificate
+#          required), routes each request to an SDK replica's inbound API.
+#   :4080  participant -> hub. The SDK calls this in plain HTTP; the edge
+#          originates mTLS to the hub's external API.
+#   :4001  SDK outbound API for the participant's own systems (load
+#          generator, core connector), spread across SDK replicas.
+#   :9902  Prometheus metrics only. The admin interface stays on localhost.
+#
+# TLS material comes from /certs, written by the edge config agent from the
+# mcm-agent. watched_directory reloads it on every atomic swap, without a
+# restart.
+#
+# __HUB_EXTAPI_FQDN__ is replaced at container start.
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }
+
+static_resources:
+  listeners:
+    - name: inbound_mtls
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8443 }
+      filter_chains:
+        - transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              require_client_certificate: true
+              common_tls_context:
+                tls_params:
+                  tls_minimum_protocol_version: TLSv1_2
+                alpn_protocols: ["http/1.1"]
+                tls_certificates:
+                  - certificate_chain: { filename: /certs/inbound-cert.pem }
+                    private_key: { filename: /certs/inbound-key.pem }
+                    watched_directory: { path: /certs }
+                validation_context:
+                  trusted_ca: { filename: /certs/inbound-ca.pem }
+                  watched_directory: { path: /certs }
+          filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: inbound
+                use_remote_address: true
+                common_http_protocol_options: { idle_timeout: 300s }
+                access_log: &error_log
+                  - name: envoy.access_loggers.stdout
+                    filter:
+                      response_flag_filter: {}
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                route_config:
+                  virtual_hosts:
+                    - name: sdk_inbound
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: sdk_inbound, timeout: 60s }
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+    - name: outbound_hub
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 4080 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: outbound_hub
+                common_http_protocol_options: { idle_timeout: 300s }
+                access_log: *error_log
+                route_config:
+                  virtual_hosts:
+                    - name: hub_extapi
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: hub_extapi
+                            host_rewrite_literal: __HUB_EXTAPI_FQDN__
+                            timeout: 60s
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+    - name: outbound_api
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 4001 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: outbound_api
+                common_http_protocol_options: { idle_timeout: 300s }
+                access_log: *error_log
+                route_config:
+                  virtual_hosts:
+                    - name: sdk_outbound
+                      domains: ["*"]
+                      routes:
+                        # The outbound API holds the request open for the whole
+                        # party lookup, quote and transfer exchange.
+                        - match: { prefix: "/" }
+                          route: { cluster: sdk_outbound, timeout: 120s }
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+    - name: metrics
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 9902 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: metrics
+                route_config:
+                  virtual_hosts:
+                    - name: metrics
+                      domains: ["*"]
+                      routes:
+                        - match: { path: /stats/prometheus }
+                          route: { cluster: envoy_admin }
+                        - match: { prefix: "/" }
+                          direct_response: { status: 404 }
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+    # One endpoint per SDK replica: Docker's DNS returns every replica's
+    # address for the service name; re-resolved often enough to follow
+    # `docker compose up --scale`.
+    - name: sdk_inbound
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      dns_refresh_rate: 5s
+      respect_dns_ttl: false
+      lb_policy: LEAST_REQUEST
+      circuit_breakers: &high_limits
+        thresholds:
+          - max_connections: 10000
+            max_pending_requests: 10000
+            max_requests: 10000
+      load_assignment:
+        cluster_name: sdk_inbound
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: sdk-scheme-adapter, port_value: 4000 }
+
+    - name: sdk_outbound
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      dns_refresh_rate: 5s
+      respect_dns_ttl: false
+      lb_policy: LEAST_REQUEST
+      circuit_breakers: *high_limits
+      load_assignment:
+        cluster_name: sdk_outbound
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: sdk-scheme-adapter, port_value: 4001 }
+
+    - name: hub_extapi
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: LEAST_REQUEST
+      circuit_breakers: *high_limits
+      load_assignment:
+        cluster_name: hub_extapi
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: __HUB_EXTAPI_FQDN__, port_value: 443 }
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: __HUB_EXTAPI_FQDN__
+          common_tls_context:
+            tls_params:
+              tls_minimum_protocol_version: TLSv1_2
+            alpn_protocols: ["http/1.1"]
+            tls_certificates:
+              - certificate_chain: { filename: /certs/outbound-cert.pem }
+                private_key: { filename: /certs/outbound-key.pem }
+                watched_directory: { path: /certs }
+            validation_context:
+              trusted_ca: { filename: /certs/outbound-ca.pem }
+              watched_directory: { path: /certs }
+              match_typed_subject_alt_names:
+                - san_type: DNS
+                  matcher: { exact: __HUB_EXTAPI_FQDN__ }
+
+    - name: envoy_admin
+      type: STATIC
+      load_assignment:
+        cluster_name: envoy_admin
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: 9901 }
