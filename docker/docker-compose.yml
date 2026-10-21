@@ -1,7 +1,16 @@
+# Container logs are kept small on disk: the observability agent ships them
+# (Docker logs API), and at load an unbounded json-file fills the host.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "2"
+
 services:
   mcm-agent:
-    # Override with MCM_AGENT_IMAGE in .env
-    image: ${MCM_AGENT_IMAGE:-mojaloop/mcm-agent:latest}
+    logging: *default-logging
+    # Set MCM_AGENT_IMAGE in .env (pinned in .env.sample)
+    image: ${MCM_AGENT_IMAGE:?set MCM_AGENT_IMAGE in .env (see .env.sample)}
     ports:
       - "${HOST_PORT_MCM:-3001}:3000"
     environment:
@@ -53,7 +62,7 @@ services:
     volumes:
       - vault-creds:/vault:ro
     networks:
-      - mojaloop
+      - control
     depends_on:
       vault-init:
         condition: service_completed_successfully
@@ -65,6 +74,7 @@ services:
       retries: 5
 
   vault:
+    logging: *default-logging
     image: hashicorp/vault:1.20
     command: server
     ports:
@@ -83,7 +93,7 @@ services:
     cap_add:
       - IPC_LOCK
     networks:
-      - mojaloop
+      - control
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --spider 'http://127.0.0.1:8200/v1/sys/health?sealedcode=200&uninitcode=200'"]
       interval: 3s
@@ -91,6 +101,7 @@ services:
       retries: 10
 
   vault-init:
+    logging: *default-logging
     image: alpine:latest
     environment:
       VAULT_ADDR: http://vault:8200
@@ -105,9 +116,28 @@ services:
     command: ["apk add --no-cache curl jq && /vault-init.sh"]
     restart: "no"
     networks:
-      - mojaloop
+      - control
+
+  # vault-init only runs on `compose up`; this keeps Vault unsealed after a
+  # Vault or host restart so the mcm-agent recovers without a manual step.
+  vault-unsealer:
+    logging: *default-logging
+    image: curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69
+    entrypoint: ["/bin/sh", "/vault-unseal.sh"]
+    environment:
+      VAULT_ADDR: http://vault:8200
+    volumes:
+      - vault-data:/vault/data:ro
+      - ./vault/vault-unseal.sh:/vault-unseal.sh:ro
+    depends_on:
+      vault:
+        condition: service_started
+    networks:
+      - control
+    restart: unless-stopped
 
   redis:
+    logging: *default-logging
     image: bitnami/redis
     environment:
       - ALLOW_EMPTY_PASSWORD=yes
@@ -122,15 +152,16 @@ services:
     restart: unless-stopped
 
   sdk-scheme-adapter:
-    # Override with SDK_IMAGE in .env (e.g. official mojaloop/sdk-scheme-adapter:vX)
-    image: ${SDK_IMAGE:-mojaloop/sdk-scheme-adapter:latest}
+    logging: *default-logging
+    # Set SDK_IMAGE in .env (pinned in .env.sample)
+    image: ${SDK_IMAGE:?set SDK_IMAGE in .env (see .env.sample)}
     command:
       - sh
       - -c
       - "yarn start:api-svc"
-    ports:
-      - "${HOST_PORT_SDK_INBOUND:-4000}:4000"
-      - "${HOST_PORT_SDK_OUTBOUND:-4001}:4001"
+    # Replicas sit behind edge-envoy, which owns the host ports and the mTLS.
+    deploy:
+      replicas: ${SDK_REPLICAS:-1}
     environment:
       - DFSP_ID=${DFSP_ID}
       - API_TYPE=fspiop
@@ -142,20 +173,20 @@ services:
       - ENABLE_TEST_FEATURES=true
       - INBOUND_LISTEN_PORT=4000
       - OUTBOUND_LISTEN_PORT=4001
-      # Bootstrap defaults — replaced by MCM Agent via WS once PM4ML connects
-      - PEER_ENDPOINT=${HUB_EXTAPI_FQDN}:443
-      - ALS_ENDPOINT=${HUB_EXTAPI_FQDN}:443
-      - QUOTES_ENDPOINT=${HUB_EXTAPI_FQDN}:443
-      - TRANSFERS_ENDPOINT=${HUB_EXTAPI_FQDN}:443
-      - TRANSACTION_REQUESTS_ENDPOINT=${HUB_EXTAPI_FQDN}:443
-      - BULK_QUOTES_ENDPOINT=${HUB_EXTAPI_FQDN}:443
-      - BULK_TRANSFERS_ENDPOINT=${HUB_EXTAPI_FQDN}:443
-      # mTLS
-      - OUTBOUND_MUTUAL_TLS_ENABLED=true
-      - INBOUND_MUTUAL_TLS_ENABLED=true
-      - IN_CA_CERT_PATH=/secrets/inbound-cacert.pem
-      - IN_SERVER_CERT_PATH=/secrets/inbound-cert.pem
-      - IN_SERVER_KEY_PATH=/secrets/inbound-key.pem
+      # Hub API, reached through the edge proxy, which originates the mTLS.
+      # The mcm-agent does not push endpoints, so these stay authoritative.
+      - PEER_ENDPOINT=edge-envoy:4080
+      - ALS_ENDPOINT=edge-envoy:4080
+      - QUOTES_ENDPOINT=edge-envoy:4080
+      - TRANSFERS_ENDPOINT=edge-envoy:4080
+      - TRANSACTION_REQUESTS_ENDPOINT=edge-envoy:4080
+      - BULK_QUOTES_ENDPOINT=edge-envoy:4080
+      - BULK_TRANSFERS_ENDPOINT=edge-envoy:4080
+      # mTLS is terminated and originated by edge-envoy. The mcm-agent still
+      # pushes TLS credentials over the control WebSocket; with these off the
+      # SDK ignores them.
+      - OUTBOUND_MUTUAL_TLS_ENABLED=false
+      - INBOUND_MUTUAL_TLS_ENABLED=false
       # JWS
       - JWS_SIGN=true
       - VALIDATE_INBOUND_JWS=true
@@ -181,15 +212,83 @@ services:
       #
       - REDIS_CACHE_TTL=600
     volumes:
-      - ./secrets/inbound-cacert.pem:/secrets/inbound-cacert.pem:ro
-      - ./secrets/inbound-cert.pem:/secrets/inbound-cert.pem:ro
-      - ./secrets/inbound-key.pem:/secrets/inbound-key.pem:ro
       - ./secrets/jwsSigningKey.key:/jwsSigningKey.key:ro
       - ./secrets/jwsVerificationKeys:/jwsVerificationKeys:ro
     networks:
       - mojaloop
+      - control
     depends_on:
       redis:
+        condition: service_started
+      # Start after the edge has its TLS material, so the config agent's one
+      # cold-start READ (broadcast to every control client) reaches no SDK.
+      edge-config-agent:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Edge config agent: a second client of the mcm-agent's control WebSocket
+  # (the channel the SDK uses). Writes the participant's mTLS material for the
+  # edge proxy to a tmpfs volume, on start and on every renewal. Runs the
+  # mcm-agent image for its WebSocket client; no image of its own.
+  edge-config-agent:
+    logging: *default-logging
+    image: ${MCM_AGENT_IMAGE:?set MCM_AGENT_IMAGE in .env (see .env.sample)}
+    entrypoint: ["/sbin/tini", "--", "node", "/edge/config-agent.js"]
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      NODE_PATH: /app/node_modules
+      MGMT_API_WS_URL: ws://mcm-agent:4004
+      CERT_DIR: /certs
+    volumes:
+      - ./edge/config-agent.js:/edge/config-agent.js:ro
+      - edge-certs:/certs
+    networks:
+      - control
+    depends_on:
+      mcm-agent:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -e /certs/inbound-cert.pem -a -e /certs/outbound-cert.pem"]
+      interval: 5s
+      timeout: 2s
+      retries: 60
+
+  # Edge proxy: terminates the hub's mTLS for inbound calls, originates mTLS
+  # for the SDK's calls to the hub, and spreads requests across SDK replicas.
+  # Only service with participant-facing host ports. See edge/envoy.yaml.
+  edge-envoy:
+    logging: *default-logging
+    image: ${EDGE_ENVOY_IMAGE:?set EDGE_ENVOY_IMAGE in .env (see .env.sample)}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        sed 's|__HUB_EXTAPI_FQDN__|${HUB_EXTAPI_FQDN:?set HUB_EXTAPI_FQDN in .env}|g'
+        /etc/envoy/envoy.yaml.tmpl > /tmp/envoy.yaml &&
+        exec envoy -c /tmp/envoy.yaml --log-level ${EDGE_LOG_LEVEL:-info}
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    ports:
+      - "${HOST_PORT_SDK_INBOUND:-443}:8443"
+      - "${HOST_PORT_SDK_OUTBOUND:-4001}:4001"
+    volumes:
+      - ./edge/envoy.yaml:/etc/envoy/envoy.yaml.tmpl:ro
+      - edge-certs:/certs:ro
+    networks:
+      - mojaloop
+    depends_on:
+      edge-config-agent:
+        condition: service_healthy
+      sdk-scheme-adapter:
         condition: service_started
     restart: unless-stopped
 
@@ -197,6 +296,7 @@ services:
   # Enabled with: docker compose --profile test up
   # In production, deploy your own core banking system and set BACKEND_ENDPOINT.
   sim-backend:
+    logging: *default-logging
     image: mojaloop/mojaloop-simulator:v15.5.4
     profiles: ["test"]
     ports:
@@ -221,6 +321,7 @@ services:
 
   # Redis metrics for the observability profile (SDK cache/pub-sub health)
   redis-exporter:
+    logging: *default-logging
     image: oliver006/redis_exporter:v1.62.0-alpine
     profiles: ["obs"]
     environment:
@@ -233,7 +334,10 @@ services:
   # observability backend. Opt-in: docker compose --profile obs up -d
   # Requires OBS_REMOTE_WRITE_URL and OBS_LOKI_URL in .env.
   alloy:
-    image: grafana/alloy:v1.10.2
+    logging: *default-logging
+    # >= v1.14 for a cAdvisor that understands Docker's containerd image store
+    # (the default since Docker 29); older versions see no containers.
+    image: grafana/alloy:v1.20.1@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
     profiles: ["obs"]
     command:
       - run
@@ -243,11 +347,22 @@ services:
       - DFSP_ID=${DFSP_ID}
       - OBS_REMOTE_WRITE_URL=${OBS_REMOTE_WRITE_URL}
       - OBS_LOKI_URL=${OBS_LOKI_URL}
+      - OBS_INGEST_USERNAME=${OBS_INGEST_USERNAME:-}
+      - OBS_INGEST_PASSWORD=${OBS_INGEST_PASSWORD:-}
+    # Host metrics are labelled with this hostname; keep it stable across
+    # container recreation so the host keeps one time series.
+    hostname: ${DFSP_ID}
+    # Host cgroup namespace and read-only host paths for the embedded cAdvisor
+    # (per-container CPU and memory).
+    cgroup: host
     volumes:
       - ./observability/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
       - /:/rootfs:ro
       - alloy-data:/var/lib/alloy/data
     networks:
@@ -258,7 +373,20 @@ volumes:
   vault-data:
   vault-creds:
   alloy-data:
+  # Edge TLS material: RAM only, never on disk; shared by the config agent
+  # (writer) and the edge proxy (read-only).
+  edge-certs:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1m,uid=10001,gid=10001,mode=0700"
 
 networks:
   mojaloop:
+    driver: bridge
+  # Carries the participant's key material: Vault, the mcm-agent and its
+  # control WebSocket. Only the SDK and the edge config agent join it; the
+  # edge proxy, simulator and observability agents do not.
+  control:
     driver: bridge

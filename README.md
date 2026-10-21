@@ -4,7 +4,8 @@ The Integration Toolkit (ITK) is what a participant — a DFSP such as a bank, m
 
 - **MCM Agent** — enrols with the hub's Connection Manager and drives the certificate lifecycle
 - **Vault** — holds the DFSP's private keys and PKI state
-- **SDK Scheme Adapter** — speaks FSPIOP, terminates mTLS, signs and validates JWS
+- **Edge proxy** — terminates and originates the mTLS with the hub, and spreads load across SDK instances; fed with certificates from the MCM Agent ([`docker/edge/`](docker/edge/README.md))
+- **SDK Scheme Adapter** — speaks FSPIOP, signs and validates JWS; scales horizontally behind the edge proxy
 - **Redis** — the adapter's cache
 - **Simulator backend** (test profile) — a stand-in for the participant's core banking system, replaced at go-live
 - **Observability agent** (obs profile, optional) — ships metrics and logs to the participant's observability backend
