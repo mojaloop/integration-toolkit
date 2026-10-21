@@ -107,6 +107,23 @@ services:
     networks:
       - mojaloop
 
+  # vault-init only runs on `compose up`; this keeps Vault unsealed after a
+  # Vault or host restart so the mcm-agent recovers without a manual step.
+  vault-unsealer:
+    image: curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69
+    entrypoint: ["/bin/sh", "/vault-unseal.sh"]
+    environment:
+      VAULT_ADDR: http://vault:8200
+    volumes:
+      - vault-data:/vault/data:ro
+      - ./vault/vault-unseal.sh:/vault-unseal.sh:ro
+    depends_on:
+      vault:
+        condition: service_started
+    networks:
+      - mojaloop
+    restart: unless-stopped
+
   redis:
     image: bitnami/redis
     environment:
