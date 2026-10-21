@@ -157,6 +157,9 @@ prometheus.remote_write "hub" {
 
 discovery.docker "containers" {
   host = "unix:///var/run/docker.sock"
+  // One target per network, not only the container's first one: the SDK is
+  // on control (first) and mojaloop, and Alloy can reach only mojaloop.
+  match_first_network = false
 }
 
 discovery.relabel "containers" {
