@@ -36,12 +36,14 @@ ITK packages those moving parts as a small, self-contained Docker Compose stack 
 |---|---|---|
 | **MCM Agent** | Enrols with the hub's Connection Manager, drives the certificate lifecycle, pushes live TLS material and JWS keys to the SDK over a WebSocket | Removes all manual certificate operations — the dominant failure mode of scheme connectivity |
 | **Vault** | Generates and holds the participant's private keys and PKI state | Keys never exist outside the participant's infrastructure; the agent authenticates to it with AppRole only |
-| **SDK Scheme Adapter** | Speaks FSPIOP, terminates mTLS in both directions, signs and validates JWS, handles ILP, adapts async scheme traffic to a synchronous backend API | The reference Mojaloop connector — the same component used across Mojaloop deployments, composed rather than reimplemented |
+| **Edge proxy** (Envoy) | Terminates the hub's mTLS for inbound calls, originates mTLS for the SDK's calls to the hub, spreads requests across SDK instances | Takes TLS work out of the SDK so each instance does more, and lets the SDK scale behind one participant endpoint ([details](../docker/edge/README.md)) |
+| **Edge config agent** | Receives the participant's TLS material from the MCM Agent's control channel and writes it for the edge proxy | The MCM Agent stays the single source of certificates; the edge reloads them without a restart |
+| **SDK Scheme Adapter** | Speaks FSPIOP, signs and validates JWS, handles ILP, adapts async scheme traffic to a synchronous backend API | The reference Mojaloop connector — the same component used across Mojaloop deployments, composed rather than reimplemented |
 | **Redis** | The adapter's state cache | Required by the SDK for in-flight transfer state and callback correlation |
 | **Simulator backend** *(test profile)* | Stand-in core banking system | Lets the participant bring the scheme connection fully live before the core-banking integration exists |
 | **Grafana Alloy** *(obs profile)* | Ships metrics and logs to the participant's observability backend | Optional, opt-in |
 
-Certificate rotation deserves the highlight: when the agent obtains new certificates, it pushes them to the running SDK over its control channel. **No restart, no traffic interruption, no operator action.**
+Certificate rotation deserves the highlight: when the agent obtains new certificates, it pushes them over its control channel; the edge config agent writes them for the edge proxy, which reloads them in place. **No restart, no traffic interruption, no operator action.**
 
 ## Why this approach
 
@@ -85,12 +87,12 @@ What the stack asks of the participant's operations team in steady state:
 | Keep alive | Because |
 |---|---|
 | The MCM Agent container | It drives certificate renewal; if it is down, an expiring certificate will not renew |
-| The DNS record | The hub reaches the participant by dialling its FQDN; the record must keep resolving to an address where the SDK's inbound `:443` is reachable. A static IP is the simplest way to guarantee that, but any setup that keeps the record accurate works |
+| The DNS record | The hub reaches the participant by dialling its FQDN; the record must keep resolving to an address where the edge proxy's inbound `:443` is reachable. A static IP is the simplest way to guarantee that, but any setup that keeps the record accurate works |
 | Backups of the Vault volume | It holds the participant's keys and PKI state; see the [recovery notes](integration.md#reference-notes) |
 
 Everything else — enrolment, rotation, live reconfiguration of the SDK — is automatic.
 
-**Deliberately single-instance.** The Vault file backend, the SDK's Redis cache, and the simulator all assume one replica on one host. This matches the target profile: a participant connection is low-throughput control-plane-heavy infrastructure, and a VM restart is an acceptable recovery mode — the agent resynchronises state from the hub on reconnect. Institutions needing HA should treat the compose file as the reference topology to re-platform, not scale in place.
+**One host; the SDK scales on it.** The SDK runs as `SDK_REPLICAS` instances behind the edge proxy, which spreads requests per request; they share one Redis for callback correlation. The Vault file backend, Redis and the simulator assume one instance on one host, and a VM restart is an acceptable recovery mode — the agent resynchronises state from the hub on reconnect. Institutions needing HA should treat the compose file as the reference topology to re-platform, not scale in place.
 
 ## Relationship with the ML Deployment Toolkit
 

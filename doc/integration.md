@@ -31,7 +31,7 @@ Why the stack looks the way it does: [Architecture](architecture.md). Onboarding
 
 **Credentials.** From the activation email, the participant activates the account, logs in, and generates its own OAuth2 client credentials — the secret is shown once and becomes `AUTH_CLIENT_SECRET`. The hub *cannot* generate or read it: the authorization model grants credential access to members of that participant only, with no hub-admin traversal ([why](https://github.com/mojaloop/ml-deployment-toolkit/blob/main/doc/architecture/security.md#authorization-model)). If someone offers to send a client secret, something is wrong.
 
-**FQDN.** The participant chooses a fully-qualified domain name and publishes it in **its own** DNS zone, pointing at the address where the SDK's inbound `:443` is reachable. Publish it now: it must resolve publicly *before* enrolment — the hub registers it as the participant's callback address and pins it by name, and enrolment fails if it does not resolve. The hub never manages DNS on the participant's behalf.
+**FQDN.** The participant chooses a fully-qualified domain name and publishes it in **its own** DNS zone, pointing at the address where the edge proxy's inbound `:443` is reachable. Publish it now: it must resolve publicly *before* enrolment — the hub registers it as the participant's callback address and pins it by name, and enrolment fails if it does not resolve. The hub never manages DNS on the participant's behalf.
 
 ## 2. Configure `.env`
 
@@ -106,8 +106,8 @@ If the agent sits at "pending signature" for a long time, that is a coordination
 
 | Port | Service | Notes |
 | --- | --- | --- |
-| `${HOST_PORT_SDK_INBOUND}` | SDK FSPIOP inbound (mTLS from hub) | default `443` |
-| `${HOST_PORT_SDK_OUTBOUND}` | SDK outbound API | default `4001` |
+| `${HOST_PORT_SDK_INBOUND}` | Edge proxy: FSPIOP inbound (mTLS from hub), to the SDK instances | default `443` |
+| `${HOST_PORT_SDK_OUTBOUND}` | Edge proxy: SDK outbound API, to the SDK instances | default `4001` |
 | `${HOST_PORT_MCM}` | MCM Agent HTTP | default `3001` |
 | `${HOST_PORT_VAULT}` | Vault UI / API | default `8200` |
 | `${HOST_PORT_REDIS}` | Redis | default `6379` |
@@ -141,6 +141,7 @@ Details: [certificate lifecycle](https://github.com/mojaloop/ml-deployment-toolk
 
 ## Reference: notes
 
-- **Bootstrap PEMs**: `secrets/inbound-{cacert,cert,key}.pem`, `secrets/jwsSigningKey.key`, and `secrets/jwsVerificationKeys/_placeholder.pub` exist only to satisfy the SDK's file-path requirements at boot. MCM Agent overrides the live TLS context and JWS keys via the PM4ML WebSocket once it connects. Don't reuse them as real material.
+- **Bootstrap PEMs**: `secrets/jwsSigningKey.key` and `secrets/jwsVerificationKeys/_placeholder.pub` exist only to satisfy the SDK's file-path requirements at boot; MCM Agent overrides the JWS keys via the PM4ML WebSocket once it connects. `secrets/inbound-{cacert,cert,key}.pem` are no longer mounted: the edge proxy serves the live TLS material from the MCM Agent. Don't reuse any of them as real material.
+- **Vault unseal**: `vault-unsealer` unseals Vault after any Vault or host restart, with the key `vault-init` stored at first start.
 - **Vault auth**: AppRole only. The `vault-init` one-shot job writes `role-id` / `secret-id` into the `vault-creds` volume; the MCM Agent reads them from `/vault/role-id` and `/vault/secret-id`.
 - **Vault recovery**: unseal key and root token live in the `vault-data` volume at `/vault/data/{unseal-key,root-token}`. Back these up to preserve Vault state across full teardowns.
