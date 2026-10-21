@@ -349,6 +349,9 @@ services:
       - OBS_LOKI_URL=${OBS_LOKI_URL}
       - OBS_INGEST_USERNAME=${OBS_INGEST_USERNAME:-}
       - OBS_INGEST_PASSWORD=${OBS_INGEST_PASSWORD:-}
+    # Host metrics are labelled with this hostname; keep it stable across
+    # container recreation so the host keeps one time series.
+    hostname: ${DFSP_ID}
     # Host cgroup namespace and read-only host paths for the embedded cAdvisor
     # (per-container CPU and memory).
     cgroup: host
