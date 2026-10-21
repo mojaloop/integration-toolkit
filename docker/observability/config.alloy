@@ -119,13 +119,14 @@ prometheus.relabel "containers" {
     action        = "keep"
   }
   // Docker container name (docker-sdk-scheme-adapter-3, ...); drop the
-  // high-cardinality id and image labels.
+  // high-cardinality id and image labels, and the image's own Docker labels
+  // that cAdvisor copies in as container_label_*.
   rule {
     source_labels = ["name"]
     target_label  = "container"
   }
   rule {
-    regex  = "id|image|name"
+    regex  = "id|image|name|container_label_.+"
     action = "labeldrop"
   }
 }
