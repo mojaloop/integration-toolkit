@@ -1,7 +1,8 @@
 // Grafana Alloy — DFSP-side observability agent (opt-in, compose profile "obs").
-// Scrapes sdk-scheme-adapter (every replica), edge proxy and host metrics, tails container
-// logs, and ships everything to your observability endpoints
-// (OBS_REMOTE_WRITE_URL / OBS_LOKI_URL in .env).
+// Scrapes sdk-scheme-adapter (every replica), edge proxy, per-container and
+// host metrics, tails container logs, and ships everything to your
+// observability endpoints (OBS_REMOTE_WRITE_URL / OBS_LOKI_URL in .env), with
+// basic auth (OBS_INGEST_USERNAME / OBS_INGEST_PASSWORD).
 // All series and log streams are labelled cluster_name=<DFSP_ID>.
 
 /********************************************
@@ -92,9 +93,51 @@ prometheus.scrape "host" {
   scrape_timeout  = "10s"
 }
 
+// Per-container CPU, memory and network (the sizing data for every service,
+// including each SDK replica). Only the series used for sizing are kept:
+// cAdvisor exports several hundred per container otherwise.
+prometheus.exporter.cadvisor "containers" {
+  docker_host      = "unix:///var/run/docker.sock"
+  docker_only      = true
+  storage_duration = "2m"
+}
+
+prometheus.scrape "containers" {
+  targets    = prometheus.exporter.cadvisor.containers.targets
+  forward_to = [prometheus.relabel.containers.receiver]
+
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+}
+
+prometheus.relabel "containers" {
+  forward_to = [prometheus.remote_write.hub.receiver]
+
+  rule {
+    source_labels = ["__name__"]
+    regex         = "container_(cpu_usage_seconds_total|cpu_cfs_throttled_seconds_total|memory_working_set_bytes|memory_rss|spec_memory_limit_bytes|network_(receive|transmit)_bytes_total|oom_events_total)"
+    action        = "keep"
+  }
+  // Docker container name (docker-sdk-scheme-adapter-3, ...); drop the
+  // high-cardinality id and image labels.
+  rule {
+    source_labels = ["name"]
+    target_label  = "container"
+  }
+  rule {
+    regex  = "id|image|name"
+    action = "labeldrop"
+  }
+}
+
 prometheus.remote_write "hub" {
   endpoint {
     url = sys.env("OBS_REMOTE_WRITE_URL")
+
+    basic_auth {
+      username = sys.env("OBS_INGEST_USERNAME")
+      password = sys.env("OBS_INGEST_PASSWORD")
+    }
 
     // endpoint may sit behind a private CA
     tls_config {
@@ -123,6 +166,12 @@ discovery.relabel "containers" {
     source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
     target_label  = "container"
   }
+  // Container name, so the SDK replicas' streams stay apart.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "instance"
+  }
 }
 
 loki.source.docker "containers" {
@@ -134,6 +183,11 @@ loki.source.docker "containers" {
 loki.write "hub" {
   endpoint {
     url = sys.env("OBS_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("OBS_INGEST_USERNAME")
+      password = sys.env("OBS_INGEST_PASSWORD")
+    }
 
     tls_config {
       insecure_skip_verify = true
